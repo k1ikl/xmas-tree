@@ -79,7 +79,7 @@
         controls.autoRotate = true;
         controls.autoRotateSpeed = 0.6;
 
-        // --- 2. 纹理生成器 (新增 Sphere 纹理) ---
+        // --- 2. 纹理生成器 ---
         function createTexture(type) {
             const canvas = document.createElement('canvas');
             canvas.width = 64; canvas.height = 64;
@@ -105,12 +105,11 @@
                 g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.3, 'rgba(255,255,255,0.8)'); g.addColorStop(1, 'rgba(255,255,255,0)');
                 ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
             } else if (type === 'sphere') {
-                // 新增：模拟立体球体，带有一个高光点
                 const g = ctx.createRadialGradient(cx-8, cy-8, 2, cx, cy, 30);
-                g.addColorStop(0, '#ffffff'); // 高光
+                g.addColorStop(0, '#ffffff'); 
                 g.addColorStop(0.2, '#dddddd'); 
                 g.addColorStop(0.8, '#aaaaaa');
-                g.addColorStop(1, '#000000'); // 边缘变暗
+                g.addColorStop(1, '#000000'); 
                 ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, 30, 0, Math.PI*2); ctx.fill();
             }
             return new THREE.CanvasTexture(canvas);
@@ -123,8 +122,7 @@
             'sphere': createTexture('sphere')
         };
 
-        // --- 3. 核心 Shader (升级以支持新类型) ---
-        // 我们通过 uniform 标志位来区分不同的装饰类型，并在 Shader 中赋予不同的表现
+        // --- 3. 核心 Shader (修复：调整了彩灯大小) ---
         const commonVertexShader = `
             uniform float uTime;
             uniform float uScale;
@@ -134,60 +132,53 @@
             varying float vAlpha;
             varying vec3 vColor;
             
-            // 类型标志
             uniform bool isLight;
             uniform bool isBauble;
             uniform bool isRibbon;
 
-            uniform vec3 uDecorColor; // 装饰物颜色
+            uniform vec3 uDecorColor;
 
             void main() {
                 vec3 pos = position;
                 
-                // --- 核心变形逻辑 (所有元素共享) ---
+                // 核心变形逻辑
                 pos *= uScale; 
                 float dist = length(pos.xz);
                 if(dist > 0.1) {
                     pos.x += (pos.x / dist) * uSpread * 5.0;
                     pos.z += (pos.z / dist) * uSpread * 5.0;
                 }
-                // ----------------------------------
 
-                // 不同的漂浮动画
+                // 漂浮动画
                 if (isRibbon) {
-                    // 飘带整体缓慢蠕动
                     pos.y += sin(uTime * 1.5 + pos.x * 0.5) * 0.3;
                 } else {
-                    // 其他元素随机漂浮
                     pos.y += sin(uTime * 2.0 + aRandom * 10.0) * 0.2;
                 }
 
                 vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
                 gl_Position = projectionMatrix * mvPosition;
                 
-                // --- 大小与颜色逻辑 ---
+                // --- 大小与颜色逻辑 (修复点 1) ---
                 float sizeMult = 1.0;
-                vColor = vec3(1.0); // 默认白色(将与uColor混合)
+                vColor = vec3(1.0); 
                 vAlpha = 1.0;
 
                 if (isLight) {
-                    sizeMult = 1.8;
+                    sizeMult = 0.9; // [修改] 从 1.8 降到 0.9，让彩灯变小更精致
                     float blink = sin(uTime * 4.0 + aRandom * 100.0);
                     vAlpha = smoothstep(0.0, 1.0, blink);
                     vColor = uDecorColor;
                 } else if (isBauble) {
-                    sizeMult = 3.5; // 圣诞球很大
-                    vAlpha = 0.9 + 0.1 * sin(uTime + aRandom); // 稳定微光
+                    sizeMult = 2.5; // [修改] 从 3.5 降到 2.5，让球体比例更协调
+                    vAlpha = 0.9 + 0.1 * sin(uTime + aRandom); 
                     vColor = uDecorColor;
                 } else if (isRibbon) {
                     sizeMult = 1.5;
-                    // 丝绸流光效果：基于高度产生流动的光带
                     float flow = sin(pos.y * 0.4 - uTime * 3.0 + aRandom * 5.0);
                     vAlpha = 0.6 + 0.4 * smoothstep(-0.5, 0.5, flow);
-                    // 飘带颜色稍微亮一点
                     vColor = mix(uDecorColor, vec3(1.0), 0.3 * vAlpha);
                 } else {
-                    // 树叶
                     vAlpha = 0.6 + 0.4 * sin(uTime * 2.0 + aRandom * 20.0);
                 }
 
@@ -205,12 +196,9 @@
                 vec4 texColor = texture2D(uTexture, gl_PointCoord);
                 if (texColor.a < 0.1) discard;
                 
-                // 基础颜色是 uniform 传入的 uColor (树的绿色)
-                // 装饰物通过 vColor 传入自己的颜色 (红、金等)
-                // 如果 vColor 接近白色(树叶)，则使用 uColor；否则优先使用 vColor
                 vec3 finalColor = uColor;
                 if (vColor.r < 0.95 || vColor.g < 0.95 || vColor.b < 0.95) {
-                     finalColor = vColor; 
+                      finalColor = vColor; 
                 }
 
                 gl_FragColor = vec4(finalColor, 1.0) * texColor;
@@ -224,12 +212,11 @@
         
         const sharedUniforms = {
             uTime: { value: 0 }, uScale: { value: 1.0 }, uSpread: { value: 0.0 }, uSize: { value: 30.0 },
-            uTexture: { value: textures['leaf'] }, uColor: { value: new THREE.Color('#2ea340') }, // 树的主色
+            uTexture: { value: textures['leaf'] }, uColor: { value: new THREE.Color('#2ea340') },
             isLight: { value: false }, isBauble: { value: false }, isRibbon: { value: false },
-            uDecorColor: { value: new THREE.Color('#ffffff') } // 装饰物颜色占位
+            uDecorColor: { value: new THREE.Color('#ffffff') }
         };
 
-        // Helper: 创建材质的简便方法
         function createMat(type, textureKey, colorHex) {
             const uniforms = THREE.UniformsUtils.clone(sharedUniforms);
             uniforms[type].value = true;
@@ -241,7 +228,7 @@
             });
         }
 
-        // A. 树体粒子
+        // A. 树体
         const treeGeo = new THREE.BufferGeometry();
         {
             const pos = [], rnd = [];
@@ -261,7 +248,7 @@
         });
         scene.add(new THREE.Points(treeGeo, treeMat));
 
-        // B. 圣诞彩灯 (Lights)
+        // B. 圣诞彩灯 (Lights) - [修复] 颜色改为更柔和的暖黄
         const lightGeo = new THREE.BufferGeometry();
         {
             const pos = [], rnd = [];
@@ -275,17 +262,17 @@
             lightGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             lightGeo.setAttribute('aRandom', new THREE.Float32BufferAttribute(rnd, 1));
         }
-        const lightMat = createMat('isLight', 'glow', '#ffaa00');
+        // [修改] 默认颜色从 #ffaa00 改为 #ffd700 (金色)，减少"红"的感觉
+        const lightMat = createMat('isLight', 'glow', '#ffd700'); 
         const lightSystem = new THREE.Points(lightGeo, lightMat);
         scene.add(lightSystem);
 
-        // C. 圣诞球 (Baubles) - 新增
+        // C. 圣诞球
         const baubleGeo = new THREE.BufferGeometry();
         {
             const pos = [], rnd = [];
-            for (let i = 0; i < 120; i++) { // 数量较少
-                const y = Math.random() * treeHeight * 0.9; // 不要在最顶部
-                // 半径稍微往里收一点，挂在树枝间
+            for (let i = 0; i < 120; i++) {
+                const y = Math.random() * treeHeight * 0.9;
                 const r = ((treeHeight - y) / treeHeight * treeRadius) * 0.9; 
                 const angle = Math.random() * Math.PI * 2;
                 pos.push(Math.cos(angle)*r, y - treeHeight/2, Math.sin(angle)*r);
@@ -294,41 +281,37 @@
             baubleGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             baubleGeo.setAttribute('aRandom', new THREE.Float32BufferAttribute(rnd, 1));
         }
-        // 使用新的 'sphere' 纹理和红色
         const baubleMat = createMat('isBauble', 'sphere', '#ff0000'); 
         const baubleSystem = new THREE.Points(baubleGeo, baubleMat);
         scene.add(baubleSystem);
 
-        // D. 丝绸飘带 (Ribbons) - 新增
+        // D. 丝绸飘带
         const ribbonGeo = new THREE.BufferGeometry();
         {
             const pos = [], rnd = [];
-            const ribbonCount = 5; // 5条飘带
-            const pointsPerRibbon = 150; // 每条的点数
+            const ribbonCount = 5; 
+            const pointsPerRibbon = 150;
             for(let r=0; r<ribbonCount; r++) {
                 const startAngle = (r / ribbonCount) * Math.PI * 2;
                 for (let i = 0; i < pointsPerRibbon; i++) {
-                    const progress = i / pointsPerRibbon; // 0 到 1
-                    const y = treeHeight * (1.0 - progress); // 从上往下绕
-                    const radius = (treeHeight - y) / treeHeight * treeRadius + 0.5; // 浮在表面
-                    // 螺旋角度：起始角度 + 进度 * 绕的圈数
+                    const progress = i / pointsPerRibbon; 
+                    const y = treeHeight * (1.0 - progress); 
+                    const radius = (treeHeight - y) / treeHeight * treeRadius + 0.5; 
                     const angle = startAngle + progress * Math.PI * 6.0; 
                     
                     pos.push(Math.cos(angle)*radius, y - treeHeight/2, Math.sin(angle)*radius);
-                    // 使用进度作为随机因子，确保流光顺滑
                     rnd.push(progress); 
                 }
             }
             ribbonGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
             ribbonGeo.setAttribute('aRandom', new THREE.Float32BufferAttribute(rnd, 1));
         }
-        // 使用 'glow' 纹理，金色
         const ribbonMat = createMat('isRibbon', 'glow', '#ffbc00');
         const ribbonSystem = new THREE.Points(ribbonGeo, ribbonMat);
         scene.add(ribbonSystem);
 
 
-        // E. 树顶 3D 光团 (保持不变)
+        // E. 树顶 3D 光团
         const topperGeo = new THREE.BufferGeometry();
         {
             const pos = []; const rMax = 1.8;
@@ -368,8 +351,9 @@
         });
         
         const fDecor = gui.addFolder('🎁 装饰挂件');
+        // [修改] 默认 lightCol 改为 '#ffd700'
         const decorParams = { 
-            lights: true, lightCol: '#ffaa00',
+            lights: true, lightCol: '#ffd700',
             baubles: true, baubleCol: '#ff0000',
             ribbons: true, ribbonCol: '#ffbc00',
             star: true, starCol: '#ffff00'
@@ -391,7 +375,7 @@
         fEnv.add(envParams, 'showSnow').name('下雪特效').onChange(v => snowSystem.visible = v);
         fEnv.add(envParams, 'snowSpeed', 0.0, 0.5).name('下雪速度');
 
-        // --- 6. 交互与动画循环 (逻辑不变) ---
+        // --- 6. 交互与动画循环 ---
         let targetScale = 1.0; let targetSpread = 0.0;
         const videoElement = document.getElementById('input_video');
         
@@ -421,7 +405,6 @@
             const currentScale = treeMat.uniforms.uScale.value + (targetScale - treeMat.uniforms.uScale.value) * 0.1;
             const currentSpread = treeMat.uniforms.uSpread.value + (targetSpread - treeMat.uniforms.uSpread.value) * 0.1;
 
-            // 同步所有材质的 Uniforms
             [treeMat, lightMat, baubleMat, ribbonMat].forEach(mat => {
                 mat.uniforms.uTime.value = time;
                 mat.uniforms.uScale.value = currentScale;
@@ -430,13 +413,22 @@
 
             topStar.position.y = (treeHeight/2) * currentScale + (currentSpread * 2.0);
             topStar.rotation.y = time * 0.8;
-            ribbonSystem.rotation.y = time * 0.1; // 飘带整体缓慢旋转
+            ribbonSystem.rotation.y = time * 0.1;
 
+            // [修复点 2] 优化的下雪逻辑：打破"一整片"下落感
             if(snowSystem.visible) {
                 const positions = snowGeo.attributes.position.array;
                 for(let i=1; i<positions.length; i+=3) {
-                    positions[i] -= envParams.snowSpeed * 50 * dt;
-                    if (positions[i] < -25) positions[i] = 25;
+                    // 技巧：利用 X 坐标 (positions[i-1]) 作为随机种子，给每个雪花不同的速度倍率
+                    // 这样即使 dt 很大，每个雪花下落的距离也不同，不会形成平面
+                    const randomSpeed = 1.0 + Math.sin(positions[i-1]) * 0.5; 
+                    
+                    positions[i] -= envParams.snowSpeed * 35 * dt * randomSpeed;
+                    
+                    if (positions[i] < -25) {
+                        // 重置到顶部时，增加一点垂直随机位移，防止在顶部形成明显的"发射面"
+                        positions[i] = 25 + Math.random() * 10;
+                    }
                 }
                 snowGeo.attributes.position.needsUpdate = true;
                 snowSystem.rotation.y = time * 0.05;
